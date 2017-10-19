@@ -13,7 +13,7 @@ def main():
 
 
     #attributes = [attr.encode() for attr in meta._attrnames]
-    root = ID3TreeNode(data, 'Class', b'True', b'False', meta._attrnames)
+    root = ID3TreeNode(data, 'Class', b'True', b'False', meta._attrnames, meta._attributes)
     for row in data:
         val = row['Class']
         for item in row:
@@ -23,16 +23,21 @@ def main():
 
 
 class ID3TreeNode:
-    # Label is whether or not this node is positive or negative (could probably be neither)
-    label = None
 
-    # Child nodes to branch to
-    children = None
+    def __init__(self, data, target_attribute, target_value, negative_value, attributes, attributes_map, forced_label = None):
+        # Label is whether or not this node is positive or negative (could probably be neither)
+        self.label = None
 
-    # The attribute that will be tested at this node
-    attribute = None
+        # Child nodes to branch to
+        self.children = dict()
 
-    def __init__(self, data, target_attribute, target_value, negative_value, attributes):
+        # The attribute that will be tested at this node
+        self.attribute = None
+
+        if forced_label:
+            label = forced_label
+            return
+
         # Check to see if all positive/negative
         positive_count = 0
         negative_count = 0
@@ -46,24 +51,46 @@ class ID3TreeNode:
 
         if negative_count == 0:
             # All are positive
-            label = target_value
+            self.label = target_value
             return
         elif positive_count == 0:
             # All are negative
-            label = negative_value
+            self.label = negative_value
             return
 
         # If no more attributes to check, return with label <= mode(data[target_attribute])
         if not attributes:
             # TODO: Verify that the ? is the value we don't care about everywhere
-            label = self._mode(data, target_attribute, [b'?'])
+            self.label = self._mode(data, target_attribute, [b'?'])
             return
 
         # Get the best attribute
         best_attribute = self._get_best_attribute(data, attributes, target_attribute)
+        self.attribute = best_attribute
 
+        decoded_attribute_options = attributes_map[best_attribute][1]
+        # Need to encode here
+        attribute_options = (option.encode() for option in decoded_attribute_options)
 
+        # Started drinking here. Verify below later...
+        option_map = dict()
+        for option in attribute_options:
+            for example in data:
+                if example[best_attribute] == option:
+                    if option not in option_map:
+                        option_map[option] = []
+                    option_map[option].append(example)
 
+        # Remove the best attributes from attributes list
+        attributes.remove(best_attribute)
+        for attr_val, segment_data in option_map.items():
+            if not segment_data:
+                print('%s --> %s' % (self.attribute, attr_val))
+                # TODO: Definitely double check this
+                self.children[attr_val] = ID3TreeNode(data, 'Class', b'True', b'False', attributes, attributes_map, self._mode(data, target_attribute, [b'?']))
+            else:
+                print('%s --> %s' % (self.attribute, attr_val))
+                self.children[attr_val] = ID3TreeNode(segment_data, 'Class', b'True', b'False', attributes, attributes_map)
 
     """
     Helper Methods
