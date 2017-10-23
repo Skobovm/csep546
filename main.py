@@ -3,42 +3,99 @@ import logging
 import math
 
 from scipy.io import arff
+from scipy.stats import chi2
+
+nodes = 0
 
 
 def main():
     logging.info("---Starting application---")
-    #data, meta = arff.loadarff("./test_data/tennis.arff")
     data, meta = arff.loadarff("./test_data/training_subsetD.arff")
+    testing_data, testing_meta = arff.loadarff("./test_data/testingD.arff")
 
     logging.info("---Data was loaded successfully---")
+    attr_names = meta._attrnames
+    print("Class" in attr_names)
+    attr_names.remove("Class")
+    print("Class" in attr_names)
 
-    #attributes = [attr.encode() for attr in meta._attrnames]
+    confidence_levels = [0.99, 0.95, 0.8, 0.5, 0.0]
+    #confidence_levels = [0.95]
 
-    #test = dict()
-    #for row in data:
-    #    test[row['Num Pin Dot Pattern Views']] = 0
-    root = ID3TreeNode(data, 'Class', b'True', b'False', meta._attrnames, meta._attributes)
-    logging.info("---ID3 decision tree was created successfully---")
+    for confidence in confidence_levels:
+        metrics = ID3TreeNodeMetrics()
+        root = ID3TreeNode(data, 'Class', b'True', b'False', attr_names, meta._attributes, confidence, metrics)
+        logging.info("---ID3 decision tree was created successfully---")
 
-    total = 0
-    correct = 0
-    for row in data:
-        prediction = root.classify(row)
-        actual = row['Class']
-        total += 1
-        correct = correct + 1 if prediction == actual else correct
-        print("Prediction: %s; Actual: %s" % (prediction, actual))
+        print("True nodes: %s" % str(metrics.true_nodes))
+        print("False nodes: %s" % str(metrics.false_nodes))
+        print("Condition nodes: %s" % str(metrics.condition_nodes))
 
-    print("Correct: %d" % correct)
-    print("Total: %d" % total)
-    print("Percent: %s" % str(correct / total))
+        total = 0
+        correct = 0
+        true_positives = 0
+        true_prediction_total = 0
+        true_actual_total = 0
+        for row in data:
+            prediction = root.classify(row, 4)
+            actual = row['Class']
+            print("Prediction: %s; Actual: %s" % (prediction, actual))
+            total += 1
+            correct += 1 if prediction == actual else 0
+            true_positives += 1 if prediction == actual and prediction == b'True' else 0
+            true_prediction_total += 1 if prediction == b'True' else 0
+            true_actual_total += 1 if actual == b'True' else 0
 
+        print("Confidence: %s" % str(confidence))
+        print("Correct: %d" % correct)
+        print("Total: %d" % total)
+        print("Total true actual: %s" % str(true_actual_total))
+        print("Total true predictions: %s" % str(true_prediction_total))
+        print("Total true correct predictions: %s" % str(true_positives))
+        print("Percent: %s" % str(correct / total))
+        #print("Precision: %s" % str(true_positives / true_prediction_total))
+        #print("Recall: %s" % str(true_positives / true_actual_total))
+
+        total = 0
+        correct = 0
+        true_positives = 0
+        true_prediction_total = 0
+        true_actual_total = 0
+        for row in testing_data:
+            prediction = root.classify(row)
+            actual = row['Class']
+            total += 1
+            correct += 1 if prediction == actual else 0
+            true_positives += 1 if prediction == actual and prediction == b'True' else 0
+            true_prediction_total += 1 if prediction == b'True' else 0
+            true_actual_total += 1 if actual == b'True' else 0
+        print("Test Data Confidence: %s" % str(confidence))
+        print("Test Data Correct: %d" % correct)
+        print("Test Data Total: %d" % total)
+        print("Total true actual: %s" % str(true_actual_total))
+        print("Total true predictions: %s" % str(true_prediction_total))
+        print("Total true correct predictions: %s" % str(true_positives))
+        print("Test Data Percent: %s" % str(correct / total))
+        #print("Test Data Precision: %s" % str(true_positives / true_prediction_total))
+        #print("Test Data Recall: %s" % str(true_positives / true_actual_total))
+
+
+class ID3TreeNodeMetrics:
+    def __init__(self):
+        self.true_nodes = 0
+        self.false_nodes = 0
+        self.condition_nodes = 0
 
 
 class ID3TreeNode:
     true_nodes = 0
     false_nodes = 0
-    def __init__(self, data, target_attribute, target_value, negative_value, attributes, attributes_map, forced_label = None):
+    condition_nodes = 0
+
+    def __init__(self, data, target_attribute, target_value, negative_value, attributes, attributes_map, confidence, metrics, forced_label = None):
+        print("CREATING NODE: %s" % ID3TreeNode.condition_nodes)
+        ID3TreeNode.condition_nodes += 1
+
         # Label is whether or not this node is positive, negative, or neither (implying a branch)
         self.label = None
 
@@ -51,12 +108,15 @@ class ID3TreeNode:
         # The attribute that will be tested at this node
         self.attribute = None
 
+        # Label used if there was not a most common value for the attribute
+        self.fallback_label = None
+
         if forced_label:
             self.label = forced_label
             if self.label == b'True':
-                ID3TreeNode.true_nodes += 1
+                metrics.true_nodes += 1
             else:
-                ID3TreeNode.false_nodes += 1
+                metrics.false_nodes += 1
             return
 
         # Check to see if all positive/negative
@@ -74,17 +134,17 @@ class ID3TreeNode:
             # All are positive
             self.label = target_value
             if self.label == b'True':
-                ID3TreeNode.true_nodes += 1
+                metrics.true_nodes += 1
             else:
-                ID3TreeNode.false_nodes += 1
+                metrics.false_nodes += 1
             return
         elif positive_count == 0:
             # All are negative
             self.label = negative_value
             if self.label == b'True':
-                ID3TreeNode.true_nodes += 1
+                metrics.true_nodes += 1
             else:
-                ID3TreeNode.false_nodes += 1
+                metrics.false_nodes += 1
             return
 
         # If no more attributes to check, return with label <= mode(data[target_attribute])
@@ -92,9 +152,9 @@ class ID3TreeNode:
             # TODO: Verify that the ? is the value we don't care about everywhere
             self.label = self._mode(data, target_attribute, [b'?'])
             if self.label == b'True':
-                ID3TreeNode.true_nodes += 1
+                metrics.true_nodes += 1
             else:
-                ID3TreeNode.false_nodes += 1
+                metrics.false_nodes += 1
             return
 
         # Get the best attribute
@@ -103,7 +163,7 @@ class ID3TreeNode:
 
         decoded_attribute_options = attributes_map[best_attribute][1]
         # Need to encode here
-        attribute_options = (option.encode() for option in decoded_attribute_options)
+        attribute_options = [option.encode() for option in decoded_attribute_options]
 
         # Started drinking here. Verify below later...
         option_map = dict()
@@ -118,44 +178,61 @@ class ID3TreeNode:
         for attribute in attributes:
             most_common_val_dict[attribute] = ID3TreeNode._mode(data, attribute, [b'?'])
 
-
         for example in data:
-            if example[best_attribute] in attribute_options:
-                option_map[example[best_attribute]].append(example)
-            elif example[best_attribute] == b'?':
-                option_map[most_common_val_dict[best_attribute]].append(example)
+            try:
+                # TODO: Should probably fix the bug here
+                if example[best_attribute] in attribute_options:
+                    option_map[example[best_attribute]].append(example)
+                elif example[best_attribute] == b'?':
+                    option_map[most_common_val_dict[best_attribute]].append(example)
+            except:
+                pass
 
         # Find the most common attribute value at this point
         self.most_common_value = self._mode(data, best_attribute, [b'?'])
+        if not self.most_common_value:
+            # Save our best guess at this node
+            self.fallback_label = self._mode(data, target_attribute, [b'?'])
+
+        # Decide whether or not to stop splitting
+        # TODO: should we stop here, or create a node for each child?
+        stop_splitting = ID3TreeNode._should_stop_splitting(data, best_attribute, attribute_options, target_attribute, target_value, confidence)
+        if stop_splitting:
+            self.label = ID3TreeNode._mode(data, target_attribute, [b'?'])
+            if self.label == b'True':
+                metrics.true_nodes += 1
+            else:
+                metrics.false_nodes += 1
+            return
+
+        # Call this a condition node at this point
+        metrics.condition_nodes += 1
 
         # Remove the best attributes from attributes list
         attributes.remove(best_attribute)
         for attr_val, segment_data in option_map.items():
             if not segment_data:
-                #print('%s --> %s' % (self.attribute, attr_val))
                 # TODO: Definitely double check this
-                self.children[attr_val] = ID3TreeNode(data, 'Class', b'True', b'False', attributes, attributes_map, self._mode(data, target_attribute, [b'?']))
+                self.children[attr_val] = ID3TreeNode(data, 'Class', b'True', b'False', attributes, attributes_map, confidence, metrics, self._mode(data, target_attribute, [b'?']))
             else:
-                #print('%s --> %s' % (self.attribute, attr_val))
-                self.children[attr_val] = ID3TreeNode(segment_data, 'Class', b'True', b'False', attributes, attributes_map)
+                self.children[attr_val] = ID3TreeNode(segment_data, 'Class', b'True', b'False', attributes, attributes_map, confidence, metrics)
 
-    def classify(self, input):
+    def classify(self, input, print_threshold = 0):
         if self.label:
             return self.label
         else:
-            try:
-                attr_val = input[self.attribute]
-            except:
-                # TODO: Remove. This hasn't been hit again
-                print("Das ist nicht gud")
             if input[self.attribute] == b'?':
-                next_node = self.children[self.most_common_value]
+                if not self.most_common_value:
+                    return self.fallback_label
+                value = self.most_common_value
+                next_node = self.children[value]
             else:
-                try:
-                    next_node = self.children[input[self.attribute]]
-                except:
-                    print("Child doesn't exist")
-            return next_node.classify(input)
+                value = input[self.attribute]
+                next_node = self.children[value]
+
+            if print_threshold > 0:
+                print("Attribute: %s; Value: %s" % (self.attribute, value))
+            return next_node.classify(input, print_threshold - 1)
 
     """
     Helper Methods
@@ -201,11 +278,6 @@ class ID3TreeNode:
         # TODO: Do non-existent values need to be considered here?
         value_buckets = dict()
 
-        # Need to prefill with all possible options
-        # TODO: More encode bullshit
-        #for option in attribute_options:
-        #    value_buckets[option.encode()] = []
-
         # TODO: Remove redundant checks
         for row in data:
             val = row[current_attribute]
@@ -224,23 +296,7 @@ class ID3TreeNode:
         split_in_info = sum([-(len(bucket)/total_count) * math.log2(len(bucket)/total_count)
                              for bucket in value_buckets.values()])
 
-        #sum_arr = []
-        #for bucket in value_buckets.values():
-        #    try:
-        #        split_val = (len(bucket)/total_count) * math.log2(len(bucket)/total_count)
-        #    except:
-        #        print("huh?")
-        #    sum_arr.append(split_val)
-        #split_in_info = -sum(sum_arr)
-
         if split_in_info == 0:
-            print(len(value_buckets.values()))
-            print("Gain: %d" % gain)
-            print("Total count: %d" % total_count)
-            for bucket in value_buckets.values():
-                print("Bucket length: %d" % len(bucket))
-            logging.warning("Split in info is 0")
-            logging.warning("Attribute used: %s" % current_attribute)
             return 0
 
         return gain / split_in_info
@@ -263,8 +319,31 @@ class ID3TreeNode:
 
         return max(gain_ratio_dict.items(), key=lambda item: item[1])[0]
 
+    @staticmethod
+    def _should_stop_splitting(data, attribute, attribute_vals, target_attr, target_val, confidence):
+        positive_count = len([row for row in data if row[target_attr] == target_val])
+        negative_count = len(data) - positive_count
 
+        num_attrs = 0
+        total = 0
+        for val in attribute_vals:
+            num_attrs += 1
+            rows_with_value = [row for row in data if row[attribute] == val]
+            local_positive_count = len([row for row in rows_with_value if row[target_attr] == target_val])
+            local_negative_count = len(rows_with_value) - local_positive_count
+            expected_positive = len(rows_with_value) * positive_count / len(data)
+            expected_negative = len(rows_with_value) * negative_count / len(data)
 
+            positive_part = ((local_positive_count - expected_positive) ** 2) / expected_positive if expected_positive else 0
+            negative_part = ((local_negative_count - expected_negative) ** 2) / expected_negative if expected_negative else 0
+            total = total + positive_part + negative_part
+
+        # Do the chi2 test now
+        # TODO: Verify that these numbers actually work
+        chi_val = chi2.isf(1 - confidence, num_attrs - 1)
+
+        # Total > chi_val means keep splitting
+        return total < chi_val
 
 
 
